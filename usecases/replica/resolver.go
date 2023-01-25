@@ -49,9 +49,7 @@ type resolver struct {
 }
 
 // State returns replicas state
-func (r *resolver) State(shardName string) (rState, error) {
-	res := rState{}
-
+func (r *resolver) State(shardName string, cl ConsistencyLevel) (res rState, err error) {
 	resolved, unresolved, err := r.schema.ResolveParentNodes(r.class, shardName)
 	if err != nil {
 		return res, err
@@ -63,12 +61,14 @@ func (r *resolver) State(shardName string) (rState, error) {
 
 	res.Hosts = resolved
 	res.nodes = unresolved
-
-	return res, nil
+	level, err := res.ConsistencyLevel(cl)
+	res.Level = level
+	return res, err
 }
 
 // rState replicas state
 type rState struct {
+	Level int
 	Hosts []string // successfully resolved names
 	nodes []string // names which could not be resolved
 }
