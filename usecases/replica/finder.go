@@ -72,7 +72,7 @@ func (f *Finder) GetOne(ctx context.Context, l ConsistencyLevel, shard string,
 	if err != nil {
 		return nil, err
 	}
-	result := <-readOne(replyCh, state.Level)
+	result := <-readOne(replyCh, state)
 	return result.data, result.err
 }
 
@@ -87,7 +87,7 @@ func (f *Finder) Exists(ctx context.Context, l ConsistencyLevel, shard string, i
 	if err != nil {
 		return false, err
 	}
-	return readOneExists(replyCh, state.Level)
+	return readOneExists(replyCh, state)
 }
 
 // GetAll gets all objects which satisfy the giving consistency
@@ -103,7 +103,7 @@ func (f *Finder) GetAll(ctx context.Context, l ConsistencyLevel, shard string,
 	if err != nil {
 		return nil, err
 	}
-	return readAll(replyCh, state.Level, len(ids), l)
+	return readAll(replyCh, len(ids), state)
 }
 
 // NodeObject gets object from a specific node.

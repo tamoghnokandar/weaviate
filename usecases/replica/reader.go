@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/weaviate/weaviate/entities/storobj"
 )
 
@@ -33,8 +32,8 @@ type tuple[T any] struct {
 
 type objTuple tuple[*storobj.Object]
 
-func readOne(ch <-chan simpleResult[findOneReply], cl int) <-chan result[*storobj.Object] {
-	counters := make([]objTuple, 0, cl*2)
+func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*storobj.Object] {
+	counters := make([]objTuple, 0, len(st.Hosts))
 	resultCh := make(chan result[*storobj.Object], 1)
 	go func() {
 		defer close(resultCh)
@@ -59,7 +58,7 @@ func readOne(ch <-chan simpleResult[findOneReply], cl int) <-chan result[*storob
 				if max < counters[i].ack {
 					max = counters[i].ack
 				}
-				if max >= cl {
+				if max >= st.Level {
 					resultCh <- result[*storobj.Object]{counters[i].o, nil}
 					return
 				}
@@ -83,15 +82,15 @@ func readOne(ch <-chan simpleResult[findOneReply], cl int) <-chan result[*storob
 				fmt.Fprintf(&sb, "%s: %d", c.sender, c.o.LastUpdateTimeUnix())
 			}
 		}
-		resultCh <- result[*storobj.Object]{nil, errors.New(sb.String())}
+		resultCh <- result[*storobj.Object]{nil, fmt.Errorf("%w %q %s", ErrConsistencyLevel, st.CLevel, sb.String())}
 	}()
 	return resultCh
 }
 
 type boolTuple tuple[bool]
 
-func readOneExists(ch <-chan simpleResult[existReply], cl int) (bool, error) {
-	counters := make([]boolTuple, 0, cl*2)
+func readOneExists(ch <-chan simpleResult[existReply], st rState) (bool, error) {
+	counters := make([]boolTuple, 0, len(st.Hosts))
 	for r := range ch {
 		resp := r.Response
 		if r.Err != nil {
@@ -107,7 +106,7 @@ func readOneExists(ch <-chan simpleResult[existReply], cl int) (bool, error) {
 			if max < counters[i].ack {
 				max = counters[i].ack
 			}
-			if max >= cl {
+			if max >= st.Level {
 				return counters[i].o, nil
 			}
 		}
@@ -124,7 +123,7 @@ func readOneExists(ch <-chan simpleResult[existReply], cl int) (bool, error) {
 			fmt.Fprintf(&sb, "%s: %t", c.sender, c.o)
 		}
 	}
-	return false, errors.New(sb.String())
+	return false, fmt.Errorf("%w %q %s", ErrConsistencyLevel, st.CLevel, sb.String())
 }
 
 type osTuple struct {
@@ -134,9 +133,9 @@ type osTuple struct {
 	err    error
 }
 
-func readAll(ch <-chan simpleResult[getObjectsReply], level, N int, cl ConsistencyLevel) ([]*storobj.Object, error) {
+func readAll(ch <-chan simpleResult[getObjectsReply], N int, st rState) ([]*storobj.Object, error) {
 	ret := make([]*storobj.Object, N)
-	counters := make([]osTuple, 0, level*2)
+	counters := make([]osTuple, 0, len(st.Hosts))
 	var sb strings.Builder
 	for r := range ch {
 		resp := r.Response
@@ -163,11 +162,11 @@ func readAll(ch <-chan simpleResult[getObjectsReply], level, N int, cl Consisten
 				if max < counters[j].acks[i] {
 					max = counters[j].acks[i]
 				}
-				if max >= level {
+				if max >= st.Level {
 					ret[i] = o
 				}
 			}
-			if max >= level {
+			if max >= st.Level {
 				M++
 			}
 		}
@@ -177,5 +176,5 @@ func readAll(ch <-chan simpleResult[getObjectsReply], level, N int, cl Consisten
 		}
 	}
 
-	return nil, fmt.Errorf("%w %q %s", ErrConsistencyLevel, cl, sb.String())
+	return nil, fmt.Errorf("%w %q %s", ErrConsistencyLevel, st.CLevel, sb.String())
 }
