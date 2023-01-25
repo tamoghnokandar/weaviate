@@ -72,7 +72,8 @@ func (f *Finder) GetOne(ctx context.Context, l ConsistencyLevel, shard string,
 	if err != nil {
 		return nil, err
 	}
-	return readOne(replyCh, level)
+	result := <-readOne(replyCh, level)
+	return result.data, result.err
 }
 
 // Exists checks if an object exists which satisfies the giving consistency

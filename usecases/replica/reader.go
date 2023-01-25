@@ -19,6 +19,11 @@ import (
 	"github.com/weaviate/weaviate/entities/storobj"
 )
 
+type result[T any] struct {
+	data T
+	err  error
+}
+
 type tuple[T any] struct {
 	sender string
 	o      T
@@ -28,52 +33,59 @@ type tuple[T any] struct {
 
 type objTuple tuple[*storobj.Object]
 
-func readOne(ch <-chan simpleResult[findOneReply], cl int) (*storobj.Object, error) {
+func readOne(ch <-chan simpleResult[findOneReply], cl int) <-chan result[*storobj.Object] {
 	counters := make([]objTuple, 0, cl*2)
-	N, nnf := 0, 0
-	for r := range ch {
-		N++
-		resp := r.Response
-		if r.Err != nil {
-			counters = append(counters, objTuple{resp.sender, nil, 0, r.Err})
-			continue
-		} else if resp.data == nil {
-			nnf++
-			continue
+	resultCh := make(chan result[*storobj.Object], 1)
+	go func() {
+		defer close(resultCh)
+		N, nnf := 0, 0
+		for r := range ch {
+			N++
+			resp := r.Response
+			if r.Err != nil {
+				counters = append(counters, objTuple{resp.sender, nil, 0, r.Err})
+				continue
+			} else if resp.data == nil {
+				nnf++
+				continue
+			}
+			counters = append(counters, objTuple{resp.sender, resp.data, 0, nil})
+			lastTime := resp.data.LastUpdateTimeUnix()
+			max := 0
+			for i := range counters {
+				if counters[i].o != nil && counters[i].o.LastUpdateTimeUnix() == lastTime {
+					counters[i].ack++
+				}
+				if max < counters[i].ack {
+					max = counters[i].ack
+				}
+				if max >= cl {
+					resultCh <- result[*storobj.Object]{counters[i].o, nil}
+					return
+				}
+			}
 		}
-		counters = append(counters, objTuple{resp.sender, resp.data, 0, nil})
-		lastTime := resp.data.LastUpdateTimeUnix()
-		max := 0
-		for i := range counters {
-			if counters[i].o != nil && counters[i].o.LastUpdateTimeUnix() == lastTime {
-				counters[i].ack++
-			}
-			if max < counters[i].ack {
-				max = counters[i].ack
-			}
-			if max >= cl {
-				return counters[i].o, nil
-			}
+		if nnf == N { // object doesn't exist
+			resultCh <- result[*storobj.Object]{nil, nil}
+			return
 		}
-	}
-	if nnf == N { // object doesn't exist
-		return nil, nil
-	}
 
-	var sb strings.Builder
-	for i, c := range counters {
-		if i != 0 {
-			sb.WriteString(", ")
+		var sb strings.Builder
+		for i, c := range counters {
+			if i != 0 {
+				sb.WriteString(", ")
+			}
+			if c.err != nil {
+				fmt.Fprintf(&sb, "%s: %s", c.sender, c.err.Error())
+			} else if c.o == nil {
+				fmt.Fprintf(&sb, "%s: 0", c.sender)
+			} else {
+				fmt.Fprintf(&sb, "%s: %d", c.sender, c.o.LastUpdateTimeUnix())
+			}
 		}
-		if c.err != nil {
-			fmt.Fprintf(&sb, "%s: %s", c.sender, c.err.Error())
-		} else if c.o == nil {
-			fmt.Fprintf(&sb, "%s: 0", c.sender)
-		} else {
-			fmt.Fprintf(&sb, "%s: %d", c.sender, c.o.LastUpdateTimeUnix())
-		}
-	}
-	return nil, errors.New(sb.String())
+		resultCh <- result[*storobj.Object]{nil, errors.New(sb.String())}
+	}()
+	return resultCh
 }
 
 type boolTuple tuple[bool]
