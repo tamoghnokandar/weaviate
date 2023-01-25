@@ -131,10 +131,10 @@ func (c *coordinator[T]) Replicate(ctx context.Context, cl ConsistencyLevel, ask
 	return c.commitAll(context.Background(), nodes, com), level, nil
 }
 
-func (c *coordinator[T]) Fetch(ctx context.Context, cl ConsistencyLevel, op readOp[T]) (<-chan simpleResult[T], int, error) {
+func (c *coordinator[T]) Fetch(ctx context.Context, cl ConsistencyLevel, op readOp[T]) (<-chan simpleResult[T], rState, error) {
 	state, err := c.Resolver.State(c.Shard, cl)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%w : class %q shard %q", err, c.Class, c.Shard)
+		return nil, state, fmt.Errorf("%w : class %q shard %q", err, c.Class, c.Shard)
 	}
 	replicas := state.Hosts
 	replyCh := make(chan simpleResult[T], len(replicas))
@@ -152,5 +152,5 @@ func (c *coordinator[T]) Fetch(ctx context.Context, cl ConsistencyLevel, op read
 		close(replyCh)
 	}()
 
-	return replyCh, state.Level, nil
+	return replyCh, state, nil
 }

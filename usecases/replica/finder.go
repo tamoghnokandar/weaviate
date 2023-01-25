@@ -68,11 +68,11 @@ func (f *Finder) GetOne(ctx context.Context, l ConsistencyLevel, shard string,
 		obj, err := f.FindObject(ctx, host, f.class, shard, id, props, additional)
 		return findOneReply{host, obj}, err
 	}
-	replyCh, level, err := c.Fetch(ctx, l, op)
+	replyCh, state, err := c.Fetch(ctx, l, op)
 	if err != nil {
 		return nil, err
 	}
-	result := <-readOne(replyCh, level)
+	result := <-readOne(replyCh, state.Level)
 	return result.data, result.err
 }
 
@@ -83,11 +83,11 @@ func (f *Finder) Exists(ctx context.Context, l ConsistencyLevel, shard string, i
 		obj, err := f.RClient.Exists(ctx, host, f.class, shard, id)
 		return existReply{host, obj}, err
 	}
-	replyCh, level, err := c.Fetch(ctx, l, op)
+	replyCh, state, err := c.Fetch(ctx, l, op)
 	if err != nil {
 		return false, err
 	}
-	return readOneExists(replyCh, level)
+	return readOneExists(replyCh, state.Level)
 }
 
 // GetAll gets all objects which satisfy the giving consistency
@@ -99,11 +99,11 @@ func (f *Finder) GetAll(ctx context.Context, l ConsistencyLevel, shard string,
 		objs, err := f.RClient.MultiGetObjects(ctx, host, f.class, shard, ids)
 		return getObjectsReply{host, objs}, err
 	}
-	replyCh, level, err := c.Fetch(ctx, l, op)
+	replyCh, state, err := c.Fetch(ctx, l, op)
 	if err != nil {
 		return nil, err
 	}
-	return readAll(replyCh, level, len(ids), l)
+	return readAll(replyCh, state.Level, len(ids), l)
 }
 
 // NodeObject gets object from a specific node.

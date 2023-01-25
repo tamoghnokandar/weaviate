@@ -40,13 +40,13 @@ func TestResolver(t *testing.T) {
 	t.Run("ALL", func(t *testing.T) {
 		got, err := r.State("S1", All)
 		assert.Nil(t, err)
-		want := rState{len(ss["S1"]), ss["S1"], nil}
+		want := rState{All, len(ss["S1"]), ss["S1"], nil}
 		assert.Equal(t, want, got)
 	})
 	t.Run("Quorum", func(t *testing.T) {
 		got, err := r.State("S3", Quorum)
 		assert.Nil(t, err)
-		want := rState{len(ss["S1"]), ss["S1"], ss["S2"]}
+		want := rState{Quorum, len(ss["S1"]), ss["S1"], ss["S2"]}
 		assert.Equal(t, want, got)
 		_, err = got.ConsistencyLevel(All)
 		assert.ErrorIs(t, err, errUnresolvedName)
@@ -58,7 +58,7 @@ func TestResolver(t *testing.T) {
 	t.Run("NoQuorum", func(t *testing.T) {
 		got, err := r.State("S5", Quorum)
 		assert.ErrorIs(t, err, errUnresolvedName)
-		want := rState{0, ss["S1"], ss["S4"]}
+		want := rState{Quorum, 0, ss["S1"], ss["S4"]}
 		assert.Equal(t, want, got)
 		_, err = got.ConsistencyLevel(All)
 		assert.ErrorIs(t, err, errUnresolvedName)
