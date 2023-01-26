@@ -76,12 +76,12 @@ type rState struct {
 }
 
 // Len returns the number of replica
-func (r rState) Len() int {
+func (r *rState) Len() int {
 	return len(r.Hosts) + len(r.nodes)
 }
 
 // ConsistencyLevel returns consistency level when it is satisfied
-func (r rState) ConsistencyLevel(l ConsistencyLevel) (int, error) {
+func (r *rState) ConsistencyLevel(l ConsistencyLevel) (int, error) {
 	level := cLevel(l, r.Len())
 	if n := len(r.Hosts); level > n {
 		return 0, fmt.Errorf("consistency level (%d) > available replicas(%d): %w :%v", level, n, errUnresolvedName, r.nodes)

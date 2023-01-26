@@ -37,22 +37,16 @@ func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*sto
 	resultCh := make(chan result[*storobj.Object], 1)
 	go func() {
 		defer close(resultCh)
-		N, nnf := 0, 0
 		for r := range ch {
-			N++
 			resp := r.Response
 			if r.Err != nil {
 				counters = append(counters, objTuple{resp.sender, nil, 0, r.Err})
 				continue
-			} else if resp.data == nil {
-				nnf++
-				continue
 			}
 			counters = append(counters, objTuple{resp.sender, resp.data, 0, nil})
-			lastTime := resp.data.LastUpdateTimeUnix()
 			max := 0
 			for i := range counters {
-				if counters[i].o != nil && counters[i].o.LastUpdateTimeUnix() == lastTime {
+				if compare(counters[i].o, resp.data) == 0 {
 					counters[i].ack++
 				}
 				if max < counters[i].ack {
@@ -63,10 +57,6 @@ func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*sto
 					return
 				}
 			}
-		}
-		if nnf == N { // object doesn't exist
-			resultCh <- result[*storobj.Object]{nil, nil}
-			return
 		}
 
 		var sb strings.Builder
@@ -149,14 +139,10 @@ func readAll(ch <-chan simpleResult[getObjectsReply], N int, st rState) ([]*stor
 		counters = append(counters, osTuple{resp.sender, resp.data, make([]int, N), nil})
 		M := 0
 		for i, x := range resp.data {
-			var lastTime int64
-			if x != nil {
-				lastTime = resp.data[i].LastUpdateTimeUnix()
-			}
 			max := 0
 			for j := range counters {
 				o := counters[j].data[i]
-				if (o == nil && lastTime == 0) || (o != nil && o.LastUpdateTimeUnix() == lastTime) {
+				if compare(counters[j].data[i], x) == 0 {
 					counters[j].acks[i]++
 				}
 				if max < counters[j].acks[i] {
@@ -177,4 +163,27 @@ func readAll(ch <-chan simpleResult[getObjectsReply], N int, st rState) ([]*stor
 	}
 
 	return nil, fmt.Errorf("%w %q %s", ErrConsistencyLevel, st.CLevel, sb.String())
+}
+
+// Compare returns an integer comparing two objects based on LastUpdateTimeUnix
+// The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
+func compare(a, b *storobj.Object) int {
+	var (
+		aLastTime int64
+		bLastTime int64
+	)
+	if a != nil {
+		aLastTime = a.LastUpdateTimeUnix()
+	}
+	if b != nil {
+		bLastTime = b.LastUpdateTimeUnix()
+	}
+	if aLastTime == bLastTime {
+		return 0
+	}
+	if aLastTime > bLastTime {
+		return 1
+	}
+	return -1
+	// todo compare versions once they are implemented on objects
 }

@@ -78,7 +78,7 @@ func object(id strfmt.UUID, lastTime int64) *storobj.Object {
 	}
 }
 
-func TestFinderFindOne(t *testing.T) {
+func TestFinderGetOne(t *testing.T) {
 	var (
 		id    = strfmt.UUID("123")
 		cls   = "C1"
