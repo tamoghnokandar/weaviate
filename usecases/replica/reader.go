@@ -33,9 +33,11 @@ type tuple[T any] struct {
 type objTuple tuple[*storobj.Object]
 
 func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*storobj.Object] {
+	// counters tracks the number of votes
 	counters := make([]objTuple, 0, len(st.Hosts))
 	resultCh := make(chan result[*storobj.Object], 1)
 	resultSent := false
+	var max int
 	go func() {
 		var winner int
 		defer close(resultCh)
@@ -46,7 +48,7 @@ func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*sto
 				continue
 			}
 			counters = append(counters, objTuple{resp.sender, resp.data, 0, nil})
-			max := 0
+			max = 0
 			for i := range counters {
 				if compare(counters[i].o, resp.data) == 0 {
 					counters[i].ack++
@@ -60,10 +62,9 @@ func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*sto
 					resultCh <- result[*storobj.Object]{counters[i].o, nil}
 				}
 			}
-
-			if resultSent && max < cLevel(All, st.Len()) {
-				repairOne(counters, st, winner)
-			}
+		}
+		if resultSent && max < cLevel(All, st.Len()) {
+			repairOne(counters, st, winner)
 		}
 		if !resultSent {
 			var sb strings.Builder
@@ -86,6 +87,8 @@ func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*sto
 }
 
 func repairOne(counters []objTuple, st rState, winnerIdx int) {
+	// TODO: if winner object is nil we need to tell the node to delete the object
+	// The adapter/repos/db/DB.overwriteObjects nil to be adjust to account for nil objects
 	vots := counters[winnerIdx].ack
 	winner := counters[winnerIdx].o
 
@@ -93,13 +96,19 @@ func repairOne(counters []objTuple, st rState, winnerIdx int) {
 		return
 	}
 
-	var previousTime int64
 	for _, c := range counters {
-		previousTime = 0
 		if compare(winner, c.o) != 0 {
 			if c.o != nil {
-				previousTime = c.o.LastUpdateTimeUnix()
-				fmt.Printf("repair: receiver: %s winnerTime %d receiverTime %d\n", c.sender, winner.LastUpdateTimeUnix(), previousTime)
+				previousTime := int64(0)
+				if c.o != nil {
+					previousTime = c.o.LastUpdateTimeUnix()
+				}
+				wName := counters[winnerIdx].sender
+				wTime := int64(0)
+				if winner != nil {
+					wTime = winner.LastUpdateTimeUnix()
+				}
+				fmt.Printf("repair: receiver:%s winner:%s winnerTime %d receiverTime %d\n", c.sender, wName, wTime, previousTime)
 				// overwrite(ctx, c.sender, winner)
 			}
 		}

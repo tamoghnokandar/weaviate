@@ -80,14 +80,15 @@ func object(id strfmt.UUID, lastTime int64) *storobj.Object {
 
 func TestFinderGetOne(t *testing.T) {
 	var (
-		id    = strfmt.UUID("123")
-		cls   = "C1"
-		shard = "SH1"
-		nodes = []string{"A", "B", "C"}
-		ctx   = context.Background()
-		obj   = object(id, 3)
-		adds  = additional.Properties{}
-		proj  = search.SelectProperties{}
+		id        = strfmt.UUID("123")
+		cls       = "C1"
+		shard     = "SH1"
+		nodes     = []string{"A", "B", "C"}
+		ctx       = context.Background()
+		obj       = object(id, 3)
+		adds      = additional.Properties{}
+		proj      = search.SelectProperties{}
+		nilObject *storobj.Object
 	)
 
 	t.Run("All", func(t *testing.T) {
@@ -131,15 +132,27 @@ func TestFinderGetOne(t *testing.T) {
 	t.Run("Quorum", func(t *testing.T) {
 		f := newFakeFactory("C1", shard, nodes)
 		finder := f.newFinder()
-		obj := object(id, 5)
+		objs := object(id, 5)
 		for _, n := range nodes[1:] {
-			f.RClient.On("FindObject", anyVal, n, cls, shard, id, proj, adds).Return(obj, nil)
+			f.RClient.On("FindObject", anyVal, n, cls, shard, id, proj, adds).Return(objs, nil)
 		}
 		f.RClient.On("FindObject", anyVal, nodes[0], cls, shard, id, proj, adds).Return(object(id, 1), nil)
 		got, err := finder.GetOne(ctx, Quorum, shard, id, proj, adds)
 		assert.Nil(t, err)
-		assert.Equal(t, obj, got)
+		assert.Equal(t, objs, got)
 	})
+	t.Run("QuorumDeletion", func(t *testing.T) {
+		f := newFakeFactory("C1", shard, nodes)
+		finder := f.newFinder()
+		f.RClient.On("FindObject", anyVal, nodes[0], cls, shard, id, proj, adds).Return(nilObject, nil)
+		f.RClient.On("FindObject", anyVal, nodes[1], cls, shard, id, proj, adds).Return(object(id, 1), nil)
+		f.RClient.On("FindObject", anyVal, nodes[2], cls, shard, id, proj, adds).Return(nilObject, nil)
+
+		got, err := finder.GetOne(ctx, Quorum, shard, id, proj, adds)
+		assert.Nil(t, err)
+		assert.Equal(t, nilObject, got)
+	})
+
 	t.Run("NoQuorum", func(t *testing.T) {
 		f := newFakeFactory("C1", shard, nodes)
 		finder := f.newFinder()
@@ -384,7 +397,6 @@ func TestFinderGetAll(t *testing.T) {
 		assert.Nil(t, got)
 	})
 
-	//
 	t.Run("AllButFirstOne", func(t *testing.T) {
 		f := newFakeFactory("C1", shard, nodes)
 		finder := f.newFinder()
