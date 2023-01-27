@@ -35,7 +35,9 @@ type objTuple tuple[*storobj.Object]
 func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*storobj.Object] {
 	counters := make([]objTuple, 0, len(st.Hosts))
 	resultCh := make(chan result[*storobj.Object], 1)
+	resultSent := false
 	go func() {
+		var winner int
 		defer close(resultCh)
 		for r := range ch {
 			resp := r.Response
@@ -51,30 +53,57 @@ func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*sto
 				}
 				if max < counters[i].ack {
 					max = counters[i].ack
+					winner = i
 				}
-				if max >= st.Level {
+				if !resultSent && max >= st.Level {
+					resultSent = true
 					resultCh <- result[*storobj.Object]{counters[i].o, nil}
-					return
 				}
 			}
-		}
 
-		var sb strings.Builder
-		for i, c := range counters {
-			if i != 0 {
-				sb.WriteString(", ")
-			}
-			if c.err != nil {
-				fmt.Fprintf(&sb, "%s: %s", c.sender, c.err.Error())
-			} else if c.o == nil {
-				fmt.Fprintf(&sb, "%s: 0", c.sender)
-			} else {
-				fmt.Fprintf(&sb, "%s: %d", c.sender, c.o.LastUpdateTimeUnix())
+			if resultSent && max < cLevel(All, st.Len()) {
+				repairOne(counters, st, winner)
 			}
 		}
-		resultCh <- result[*storobj.Object]{nil, fmt.Errorf("%w %q %s", ErrConsistencyLevel, st.CLevel, sb.String())}
+		if !resultSent {
+			var sb strings.Builder
+			for i, c := range counters {
+				if i != 0 {
+					sb.WriteString(", ")
+				}
+				if c.err != nil {
+					fmt.Fprintf(&sb, "%s: %s", c.sender, c.err.Error())
+				} else if c.o == nil {
+					fmt.Fprintf(&sb, "%s: 0", c.sender)
+				} else {
+					fmt.Fprintf(&sb, "%s: %d", c.sender, c.o.LastUpdateTimeUnix())
+				}
+			}
+			resultCh <- result[*storobj.Object]{nil, fmt.Errorf("%w %q %s", ErrConsistencyLevel, st.CLevel, sb.String())}
+		}
 	}()
 	return resultCh
+}
+
+func repairOne(counters []objTuple, st rState, winnerIdx int) {
+	vots := counters[winnerIdx].ack
+	winner := counters[winnerIdx].o
+
+	if vots < cLevel(Quorum, st.Len()) {
+		return
+	}
+
+	var previousTime int64
+	for _, c := range counters {
+		previousTime = 0
+		if compare(winner, c.o) != 0 {
+			if c.o != nil {
+				previousTime = c.o.LastUpdateTimeUnix()
+				fmt.Printf("repair: receiver: %s winnerTime %d receiverTime %d\n", c.sender, winner.LastUpdateTimeUnix(), previousTime)
+				// overwrite(ctx, c.sender, winner)
+			}
+		}
+	}
 }
 
 type boolTuple tuple[bool]
