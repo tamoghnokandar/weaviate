@@ -50,20 +50,16 @@ type resolver struct {
 
 // State returns replicas state
 func (r *resolver) State(shardName string, cl ConsistencyLevel) (res rState, err error) {
-	res.CLevel = cl	
-	resolved, unresolved, err := r.schema.ResolveParentNodes(r.class, shardName)
+	res.CLevel = cl
+	res.Hosts, res.nodes, err = r.schema.ResolveParentNodes(r.class, shardName)
 	if err != nil {
 		return res, err
 	}
-
-	if resolved == nil && unresolved == nil {
+	if res.Len() == 0 {
 		return res, errNoReplicaFound
 	}
 
-	res.Hosts = resolved
-	res.nodes = unresolved
-	level, err := res.ConsistencyLevel(cl)
-	res.Level = level
+	res.Level, err = res.ConsistencyLevel(cl)
 	return res, err
 }
 
