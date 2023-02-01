@@ -165,6 +165,12 @@ type RClient interface {
 
 	MultiGetObjects(_ context.Context, host, index, shard string,
 		ids []strfmt.UUID) ([]*storobj.Object, error)
+
+	OverwriteObjects(_ context.Context, host, index, shard string,
+		_ []*objects.VObject) ([]RepairResponse, error)
+
+	DigestObjects(ctx context.Context, host, index, shard string,
+		ids []strfmt.UUID) ([]RepairResponse, error)
 }
 
 type RepairResponse struct {

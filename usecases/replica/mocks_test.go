@@ -47,6 +47,19 @@ func (f *fakeRClient) MultiGetObjects(ctx context.Context, host, index,
 	return args.Get(0).([]*storobj.Object), args.Error(1)
 }
 
+func (f *fakeRClient) OverwriteObjects(ctx context.Context, host, index, shard string,
+	xs []*objects.VObject,
+) ([]RepairResponse, error) {
+	args := f.Called(ctx, host, index, shard, xs)
+	return args.Get(0).([]RepairResponse), args.Error(1)
+}
+
+func (f *fakeRClient) DigestObjects(ctx context.Context, host, index, shard string,
+	ids []strfmt.UUID,) ([]RepairResponse, error) {
+	args := f.Called(ctx, host, index, shard, ids)
+	return args.Get(0).([]RepairResponse), args.Error(1)
+}
+
 type fakeClient struct {
 	mock.Mock
 }
