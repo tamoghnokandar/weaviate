@@ -25,6 +25,7 @@ type result[T any] struct {
 
 type tuple[T any] struct {
 	sender string
+	UTime  int64
 	o      T
 	ack    int
 	err    error
@@ -44,10 +45,10 @@ func readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan result[*sto
 		for r := range ch {
 			resp := r.Response
 			if r.Err != nil {
-				counters = append(counters, objTuple{resp.sender, nil, 0, r.Err})
+				counters = append(counters, objTuple{resp.sender,0, nil, 0, r.Err})
 				continue
 			}
-			counters = append(counters, objTuple{resp.sender, resp.data, 0, nil})
+			counters = append(counters, objTuple{resp.sender,0, resp.data, 0, nil})
 			max = 0
 			for i := range counters {
 				if compare(counters[i].o, resp.data) == 0 {
@@ -122,10 +123,10 @@ func readOneExists(ch <-chan simpleResult[existReply], st rState) (bool, error) 
 	for r := range ch {
 		resp := r.Response
 		if r.Err != nil {
-			counters = append(counters, boolTuple{resp.sender, false, 0, r.Err})
+			counters = append(counters, boolTuple{resp.sender, 0, false, 0, r.Err})
 			continue
 		}
-		counters = append(counters, boolTuple{resp.sender, resp.data, 0, nil})
+		counters = append(counters, boolTuple{resp.sender, resp.UpdateTime, resp.data, 0, nil})
 		max := 0
 		for i := range counters {
 			if r.Err == nil && counters[i].o == resp.data {

@@ -28,6 +28,8 @@ type commitOp[T any] func(_ context.Context, host, requestID string) (T, error)
 // readOp defines a generic read operation
 type readOp[T any] func(_ context.Context, host string) (T, error)
 
+type readOp2[T any] func(_ context.Context, host string, fullRead bool) (T, error)
+
 // coordinator coordinates replication of write requests
 type coordinator[T any] struct {
 	Client
@@ -147,6 +149,43 @@ func (c *coordinator[T]) Fetch(ctx context.Context, cl ConsistencyLevel, op read
 				resp, err := op(ctx, replica)
 				replyCh <- simpleResult[T]{resp, err}
 			}(replica)
+		}
+		wg.Wait()
+		close(replyCh)
+	}()
+
+	return replyCh, state, nil
+}
+
+func (c *coordinator[T]) Fetch2(ctx context.Context, cl ConsistencyLevel, op readOp2[T]) (<-chan simpleResult[T], rState, error) {
+	state, err := c.Resolver.State(c.Shard, cl)
+	if err != nil {
+		return nil, state, fmt.Errorf("%w : class %q shard %q", err, c.Class, c.Shard)
+	}
+	level := state.Level
+	replyCh := make(chan simpleResult[T], level)
+
+	candidates := state.Hosts[:level]                          // direct ones
+	candidatePool := make(chan string, len(state.Hosts)-level) // remaining ones
+	for _, replica := range state.Hosts[level:] {
+		candidatePool <- replica
+	}
+	close(candidatePool) // pool is ready
+	go func() {
+		wg := sync.WaitGroup{}
+		wg.Add(len(candidates))
+		for i := range candidates { // Ask direct candidate first
+			go func(idx int) {
+				defer wg.Done()
+				resp, err := op(ctx, candidates[idx], idx == 0)
+				// If node is not responding delegate request to another node
+				if err != nil {
+					if delegate, ok := <-candidatePool; ok {
+						resp, err = op(ctx, delegate, idx == 0)
+					}
+				}
+				replyCh <- simpleResult[T]{resp, err}
+			}(i)
 		}
 		wg.Wait()
 		close(replyCh)
