@@ -21,6 +21,7 @@ import (
 	"github.com/weaviate/weaviate/entities/additional"
 	"github.com/weaviate/weaviate/entities/search"
 	"github.com/weaviate/weaviate/entities/storobj"
+	"github.com/weaviate/weaviate/usecases/objects"
 )
 
 // ErrConsistencyLevel consistency level cannot be achieved
@@ -81,7 +82,7 @@ func (f *Finder) GetOne(ctx context.Context, l ConsistencyLevel, shard string,
 }
 
 // GetOne gets object which satisfies the giving consistency
-func (f *Finder) GetOne2(ctx context.Context, l ConsistencyLevel, shard string,
+func (f *Finder) GetOneV2(ctx context.Context, l ConsistencyLevel, shard string,
 	id strfmt.UUID, props search.SelectProperties, additional additional.Properties,
 ) (*storobj.Object, error) {
 	c := newReadCoordinator[findOneReply](f, shard)
@@ -153,14 +154,14 @@ func (f *Finder) readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan
 			winner     = 0
 			max        = 0
 			resultSent = false
-			contentIdx = 0
+			contentIdx = -1
 		)
 
 		for r := range ch { // len(ch) == st.Level
 			resp := r.Response
 			if r.Err != nil { // a least one node is not responding
 				resultCh <- result[*storobj.Object]{nil, r.Err}
-				continue
+				return
 			}
 			if !resp.DigestRead {
 				contentIdx = len(counters)
@@ -176,16 +177,21 @@ func (f *Finder) readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan
 					max = counters[i].ack
 					winner = i
 				}
-				if !resultSent && max >= st.Level {
+				if !resultSent && max >= st.Level && contentIdx >= 0 {
 					resultSent = true
 					resultCh <- result[*storobj.Object]{counters[contentIdx].o, nil}
 				}
 			}
 		}
-		if len(counters) > 0 && counters[winner].UTime == counters[contentIdx].UTime {
-			counters[winner].o = counters[contentIdx].o
+		// Just in case this however should not be possible
+		if n := len(counters); n == 0 || contentIdx < 0 {
+			resultCh <- result[*storobj.Object]{nil, fmt.Errorf("internal error: #responses %d index %d", n, contentIdx)}
+			return
 		}
-		if obj, err := f.repairOne(counters, st, winner); err == nil {
+		// if counters[winner].UTime == counters[contentIdx].UTime {
+		// 	counters[winner].o = counters[contentIdx].o
+		// }
+		if obj, err := f.repairOne(counters, st, contentIdx); err == nil {
 			if !resultSent {
 				resultCh <- result[*storobj.Object]{obj, nil}
 			}
@@ -211,34 +217,73 @@ func (f *Finder) readOne(ch <-chan simpleResult[findOneReply], st rState) <-chan
 	return resultCh
 }
 
-func (f *Finder) repairOne(counters []objTuple, st rState, winnerIdx int) (*storobj.Object, error) {
-	return nil, fmt.Errorf("no majority found")
-
-	for _, x := range counters {
-		if x.err != nil {
-			return nil, x.err
+// repair one object on several nodes using last write wins strategy
+func (f *Finder) repairOne(ctx context.Context, counters []objTuple, st rState, shard string, contentIdx int) (*storobj.Object, err error) {
+	var (
+		lastUTime int64
+		winnerIdx int
+	)
+	for i, x := range counters {
+		if x.UTime > lastUTime {
+			lastUTime = x.UTime
+			winnerIdx = i
 		}
 	}
-	// TODO: if winner object is nil we need to tell the node to delete the object
-	// The adapter/repos/db/DB.overwriteObjects nil to be adjust to account for nil objects
-	vots := counters[winnerIdx].ack
-	winner := counters[winnerIdx]
-	if vots < cLevel(Quorum, st.Len()) {
-		return nil, fmt.Errorf("no majority found")
-	}
-	if counters[winnerIdx].UTime == 0 {
+
+	if lastUTime < 1 {
 		return nil, fmt.Errorf("nil object")
 	}
+	
+	updates := counters[contentIdx].o
+	if counters[contentIdx].UTime != lastUTime {
+		updates, err = f.RClient.FindObject(ctx, counters[winnerIdx].sender, f.class, shard, counters[contentIdx].o.ID(), nil, additional.Properties{})
+		if err != nil {
+			return nil, fmt.Errorf("get most recent object from %s: %w", counters[winnerIdx].sender,err)
+		}
+	}
+
+	isNewObject := lastUTime == updates.CreationTimeUnix()
+	for i, x := range counters {
+		if x.UTime == 0  && !isNewObject{
+			return nil, fmt.Errorf("conflict: object might have been deleted on node %q", x.sender)
+		}
+	}
+
+	// case where updateTime == createTime and all other object are nil
+
+	// if updatetime == createdtime overwrite
+	// TODO: if winner object is nil we need to tell the node to delete the object
+	// The adapter/repos/db/DB.overwriteObjects nil to be adjust to account for nil objects
+	// vots := counters[winnerIdx].ack
+	// winner := counters[winnerIdx]
+	// if vots < cLevel(Quorum, st.Len()) {
+	// 	return nil, fmt.Errorf("no majority found")
+	// }
+	// if counters[winnerIdx].UTime == 0 {
+	// 	return nil, fmt.Errorf("nil object")
+	// }
 
 	for _, c := range counters {
-		if winner.UTime != c.UTime {
+		if c.UTime != lastUTime {
+			updates := []*objects.VObject{{
+				LatestObject:    &updates.Object,
+				StaleUpdateTime: c.UTime,
+				Version:         0, // todo set when implemented
+			}}
 			if c.o != nil {
-				wName := counters[winnerIdx].sender
-				fmt.Printf("repair: receiver:%s winner:%s winnerTime %d receiverTime %d\n", c.sender, wName, winner.UTime, c.UTime)
-				return winner.o, nil
+				resp, err := f.RClient.OverwriteObjects(ctx, c.sender, f.class, shard, updates)
+				if err != nil {
+					return nil, err
+				}
+
+				if len(resp) > 0 && resp[0].Err != ""  && resp[0].UpdateTime != lastUTime{
+					return nil, fmt.Errorf("%s", resp[0].Err)
+				}
+				// fmt.Printf("repair: receiver:%s winner:%s winnerTime %d receiverTime %d\n", c.sender, wName, winner.UTime, c.UTime)
+				// return winner.o, nil
 				// overwrite(ctx, c.sender, winner)
 			}
 		}
 	}
-	return nil, fmt.Errorf("TODO")
+	return updates, nil
 }
